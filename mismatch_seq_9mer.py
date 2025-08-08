@@ -1,14 +1,32 @@
 import pandas as pd
 import os
 import pickle
-os.chdir('/wistar/auslander/Timothy/fasta_seq_alg')
+import time
+from tqdm import tqdm # type: ignore
 
-#do it line by line so that with big databases you can get results constantly
-        
-def fastaReader(file):
-    print("called fasta to dict")
-    with open(file) as f:
-        print("openned file")
+#================Configuration=====================#
+os.chdir('/wistar/auslander/Timothy/fasta_seq_alg')
+kmer_length = 10
+
+fasta_a_filepath = "/wistar/auslander/Bryant/projects/pdx_protein_seq/uniprotkb_AND_model_organism_9606_2024_05_06.fasta"
+fasta_b_filepath = "refseq_small.txt"
+# fasta_b_filepath = "/wistar/auslander/prot/try0/refseq_db/bac_ref_seq.txt"
+
+first_dictionary_path = 'firstDict.pkl' #Dictionary that maps all unique kmers from FASTA A to the protein names that contain the kmer 
+#Ex. {ABCDEFGH: [Protein 1, Protein 2]}
+
+expanded_dictionary_path = 'superDict.pkl' #A list containing K amount of dictionaries; Each individul dictionary takes a kmer from first dictionary and deletes the Kth character of the sequence and maps to original kmer. 
+#Ex. {BCDEFGH: [ABCDEFGH, BBCDEFGH]}
+
+output_csv = "aa_matches_mismatch.csv"
+
+#================FASTA Reader=====================#
+def fastaReader(filepath):
+    
+    # Generator that yields (sequence_id, sequence) from a FASTA file.
+    
+    print(f"Reading FASTA: {filepath}")
+    with open(filepath) as f:
         for line in f:
             line = line.strip()
             if line.startswith(">"):
@@ -16,91 +34,60 @@ def fastaReader(file):
             elif id:
                 yield(id, line)
                 id = None
-        print("FINISHED")
+    print("Finished reading FASTA")
 
-
-
-# def dict_aa(fasta, k):
-#     aa_dict = {}
-#     print("Dictionary In Progress")
-#     for seq_id, seq in fastaReader(fasta):
-#         for i in range(len(seq) - k + 1):
-#             aa = seq[i:i+k]
-#             if aa not in aa_dict:
-#                 aa_dict[aa] = []
-#             aa_dict[aa].append(seq_id)
-#     print(f"Dictionary of {len(aa_dict)} Created")
-#     return aa_dict
-
-def dict_aa_9(index, k):
-    pos_dicts = []
-    for i in range(k): pos_dicts.append({})
-    length = len(index)
-    percent = 0
-    for aa in index:
-        percent+=1
-        for i in range(k):
-            mismatch = aa[:i] + aa[i+1:]
-            if mismatch not in pos_dicts[i]:
-                pos_dicts[i][mismatch] = []
-            pos_dicts[i][mismatch].append(aa)
-        print(f"we are {percent/length}% of the way done creating the mega dictionary")
-    return pos_dicts
-
-def process_sequence(seq_id_b, seq_b, k, super_dict, aa_index):
+#================Match Finder=====================#
+def process_sequence(seqB_id, seq_b, kmer_length, expanded_dicts, first_dict):
+    
+    #Process a single sequence from Database B, checking for matches in Expanded Dict.
+    #Returns a list of (seqA_id, matched_kmer_from_A, seqB_id, matched_kmer_from_B)
+    
     matches = []
-    for i in range(len(seq_b) - k + 1):
-        aa = seq_b[i:i+k]
-        for j in range(k):
-            aa_9 = aa[:j] + aa[j+1:]
-            if aa_9 in super_dict[j]:
-                for aa_a in super_dict[j][aa_9]:
-                    for seq_id_a in aa_index[aa_a]:
-                        matches.append((seq_id_a,aa_a, seq_id_b, aa))    
+    for i in range(len(seq_b) - kmer_length + 1):
+        matched_kmer_from_B = seq_b[i:i+kmer_length] #Gets substring of length K from the sequence
+        for dict_number in range(kmer_length):
+            kmer_with_deletion = matched_kmer_from_B[:dict_number] + matched_kmer_from_B[dict_number+1:] #Deletes AA at index dict_number from substring
+            if kmer_with_deletion in expanded_dicts[dict_number]: #Compares it to dictionary of corresponding number
+                for matched_kmer_from_A in expanded_dicts[dict_number][kmer_with_deletion]: #Look at every mapped kmer
+                    for seqA_id in first_dict[matched_kmer_from_A]: #And then every mapped Sequence name to that kmer
+                        matches.append((seqA_id, matched_kmer_from_A, seqB_id, matched_kmer_from_B))    
     return matches
 
-def find_matches(fasta_b_path, k, super_dict, aa_index):
+def find_matches(fasta_b_filepath, kmer_length, expanded_dicts, first_dict):
+    
+    # Iterate through all the Sequences in FASTA B and collect all matches from that sequence.
+    
     try:
         matches = []
-        print("Searching for matches")
-        i = 0
-        for seq_id_b, seq_b in fastaReader(fasta_b_path):
-            matches.extend(process_sequence(seq_id_b, seq_b, k, super_dict, aa_index))
-            i+=1
-            print(f"ONE DB2 DOWN!!!! WE HAVE GONE THROUGH {i} of DATABASE 2's SEQUENCES")
+        print("Searching for matches...")
+        for seqB_id, seq_b in tqdm(fastaReader(fasta_b_filepath), desc="Scanning DB2", unit="seq"):
+            matches.extend(process_sequence(seqB_id, seq_b, kmer_length, expanded_dicts, first_dict))
         return matches
     except KeyboardInterrupt:
+        print(f"Process interrupted. Returning collected matches.")
         return matches
-    
+
+#================Main Execution=====================#
+if __name__ == "__main__":
+    print(f"Loading pickled dictionaries...")
+
+    with open(first_dictionary_path, 'rb') as f:
+        first_dict = pickle.load(f)    
+    print("Loaded First Dictionary")
+
+    with open(expanded_dictionary_path, 'rb') as f:
+        expanded_dicts = pickle.load(f)
+    print("Loaded Expanded Dictionaries")
+
+    start_time = time.time()
+    matches = find_matches(fasta_b_filepath, kmer_length, expanded_dicts, first_dict)
+    elapsed_time = time.time() - start_time
+    print(f"Matching completed in {elapsed_time:.2f} seconds.")
 
 
-k = 10
-fasta_a = "/wistar/auslander/Bryant/projects/pdx_protein_seq/uniprotkb_AND_model_organism_9606_2024_05_06.fasta"
-fasta_b = "/wistar/auslander/prot/try0/refseq_db/bac_ref_seq.txt"
-#fasta_b = "refseq_small.txt"
+    df_matches = pd.DataFrame(matches, columns=['seqA_id', 'matched_kmer_from_A', 'seqB_id', 'matched_kmer_from_B'])
+    df_matches = df_matches.drop_duplicates()
+    print(f"Found {len(df_matches)} unique matches.")
 
-print("Reading FIRST dict ...")
-with open('firstDict.pkl', 'rb') as f:
-    aa_index = pickle.load(f)    
-print("read in index")
-
-# dict9 = dict_aa_9(aa_index, k)
-
-# print("starting superDict Dump")
-# with open('superDict.pkl', 'wb') as f:
-#     pickle.dump(dict9, f)
-# print("Dict Dumped ... Staring to read the dict...")
-
-with open('superDict.pkl', 'rb') as f:
-    super_dict = pickle.load(f)
-print("read in super dictionary")
-
-matches = find_matches(fasta_b, k, super_dict, aa_index)
-
-df_matches = pd.DataFrame(matches, columns=['seqA_id', 'aa_a', 'seqB_id', 'aa_b'])
-df_matches = df_matches.drop_duplicates()
-print(f"there are {len(df_matches)} entries")
-
-output_csv = "aa_matches_mismatch.csv"
-df_matches.to_csv(output_csv, index=False)
-print("Saved and FInished")
+    df_matches.to_csv(output_csv, index=False)
+    print(f"Matches saved to {output_csv}")
