@@ -1,31 +1,35 @@
 import pandas as pd
 import os
+import sys
+import pickle
 from tqdm import tqdm # type: ignore
 
 #================Configuration=====================#
 os.chdir('/wistar/auslander/Timothy/fasta_seq_alg')
 
 kmer_length = 10
+# fasta_a_filepath = sys.argv[1]
+# fasta_b_filepath = sys.argv[2]
 fasta_a_filepath = "/wistar/auslander/Bryant/projects/pdx_protein_seq/uniprotkb_AND_model_organism_9606_2024_05_06.fasta"
-fasta_b_filepath = "refseq_small.txt"
+# fasta_b_filepath = "refseq_small.txt"
 # fasta_b_filepath = "/wistar/auslander/prot/try0/refseq_db/bac_ref_seq.txt"
 
-output_csv = "aa_matches.csv"
+task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0")
+output_csv = (f"results/aa_matches_{task_id}.csv")
 
 #================FASTA Reader=====================#
-def fastaReader(filepath):
+def fastaReader():
     
     # Generator that yields (sequence_id, sequence) from a FASTA file.
     
-    print(f"Reading FASTA: {filepath}")
-    with open(filepath) as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith(">"):
-                id = line
-            elif id:
-                yield(id, line)
-                id = None
+    print(f"Reading FASTA: ")
+    for line in sys.stdin:
+        line = line.strip()
+        if line.startswith(">"):
+            id = line
+        elif id:
+            yield(id, line)
+            id = None
     print("Finished reading FASTA")
 
 #================Kmer Dictionary=====================#
@@ -59,15 +63,16 @@ def process_sequence(seqB_id, seq_b, kmer_length, kmer_dict):
                 matches.append((seqA_id, seqB_id, kmer))
     return matches
 
-def find_matches(fasta_b_path, kmer_length, kmer_dict):
+def find_matches(kmer_length, kmer_dict):
     
     # Iterates through all the sequences in FASTA B and collects all matching kmers from FASTA A.
     
     try:
         matches = []
         print("Searching for matches...")
-        for seqB_id, seq_b in tqdm(fastaReader(fasta_b_path), desc = 'Scanning FASTA B', unit='seq'):
+        for i, (seqB_id, seq_b) in enumerate(fastaReader(), start= 1):
             matches.extend(process_sequence(seqB_id, seq_b, kmer_length, kmer_dict))
+            print(f'{i} sequences from DataBase 2 completed.')
         return matches
     except KeyboardInterrupt:
         print("Process interrupted. Returning collected matches.")
@@ -75,9 +80,10 @@ def find_matches(fasta_b_path, kmer_length, kmer_dict):
 
 #================Main Execution=====================#
 if __name__ == "__main__":
-    kmer_dict = build_kmer_dict(fasta_a_filepath, kmer_length)
+    with open('firstDict.pkl', 'rb') as f:
+        kmer_dict = pickle.load(f)
 
-    matches = find_matches(fasta_b_filepath, kmer_length, kmer_dict)
+    matches = find_matches(kmer_length, kmer_dict)
 
     df_matches = pd.DataFrame(matches, columns=['seqA_id', 'seqB_id', 'matching_kmer'])
     df_matches = df_matches.drop_duplicates()
