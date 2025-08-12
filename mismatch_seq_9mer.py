@@ -2,6 +2,7 @@ import pandas as pd
 import os
 import pickle
 import time
+import sys
 from tqdm import tqdm # type: ignore
 
 #================Configuration=====================#
@@ -18,22 +19,22 @@ first_dictionary_path = 'firstDict.pkl' #Dictionary that maps all unique kmers f
 expanded_dictionary_path = 'superDict.pkl' #A list containing K amount of dictionaries; Each individul dictionary takes a kmer from first dictionary and deletes the Kth character of the sequence and maps to original kmer. 
 #Ex. {BCDEFGH: [ABCDEFGH, BBCDEFGH]}
 
-output_csv = "aa_matches_mismatch.csv"
+task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0")
+output_csv = (f"not_exact_matches/results/aa_matches_mismatch_{task_id}.csv")
 
 #================FASTA Reader=====================#
-def fastaReader(filepath):
+def fastaReader():
     
     # Generator that yields (sequence_id, sequence) from a FASTA file.
     
-    print(f"Reading FASTA: {filepath}")
-    with open(filepath) as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith(">"):
-                id = line
-            elif id:
-                yield(id, line)
-                id = None
+    print(f"Reading FASTA: ")
+    for line in sys.stdin:
+        line = line.strip()
+        if line.startswith(">"):
+            id = line
+        elif id:
+            yield(id, line)
+            id = None
     print("Finished reading FASTA")
 
 #================Match Finder=====================#
@@ -53,15 +54,16 @@ def process_sequence(seqB_id, seq_b, kmer_length, expanded_dicts, first_dict):
                         matches.append((seqA_id, matched_kmer_from_A, seqB_id, matched_kmer_from_B))    
     return matches
 
-def find_matches(fasta_b_filepath, kmer_length, expanded_dicts, first_dict):
+def find_matches(kmer_length, expanded_dicts, first_dict):
     
     # Iterate through all the Sequences in FASTA B and collect all matches from that sequence.
     
     try:
         matches = []
         print("Searching for matches...")
-        for seqB_id, seq_b in tqdm(fastaReader(fasta_b_filepath), desc="Scanning DB2", unit="seq"):
+        for i, (seqB_id, seq_b) in enumerate(fastaReader(), start=1):
             matches.extend(process_sequence(seqB_id, seq_b, kmer_length, expanded_dicts, first_dict))
+            print(f"{i} of Database 2's sequences have been matched.")
         return matches
     except KeyboardInterrupt:
         print(f"Process interrupted. Returning collected matches.")
@@ -80,7 +82,7 @@ if __name__ == "__main__":
     print("Loaded Expanded Dictionaries")
 
     start_time = time.time()
-    matches = find_matches(fasta_b_filepath, kmer_length, expanded_dicts, first_dict)
+    matches = find_matches(kmer_length, expanded_dicts, first_dict)
     elapsed_time = time.time() - start_time
     print(f"Matching completed in {elapsed_time:.2f} seconds.")
 
